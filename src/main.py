@@ -1,17 +1,26 @@
 # tta/main.py
 
-from config import *  # Import all settings
+from settings import *  # Import all settings
+import sys
 
-print(f"Using Neo4j URI: {NEO4J_URI}")
-print(f"Using LLM API Base: {LLM_API_BASE}")
-# ... use other settings as needed
+from agents.ipa import process_input
+from agents.narrative_generator import generate_narrative
+from schema import AgentState, GameState, CharacterState
+from typing import Dict
+
+# Add the TTA source directory to the Python path
+# This is necessary to import the agents and schema modules.
+#
+# Note: This assumes that the TTA source code is located in the /workspaces/tta.prod directory.
+# If the source code is located elsewhere, the path should be adjusted accordingly.
+sys.path.append('/workspaces/tta.prod', '/workspaces/tta.prod/src')
 
 # --- Main Game Loop ---
 # This is where the game loop would go.  For now, we'll just print a message.
 print("Welcome to the Therapeutic Text Adventure!")
+print(f"Using Neo4j URI: {NEO4J_URI}")
+print(f"Using LLM API Base: {LLM_API_BASE}")
 
-import sys
-sys.path.append('/workspaces/tta.prod', '/workspaces/tta.prod/src')
 """
 Main game loop for the Therapeutic Text Adventure (TTA).
 
@@ -33,10 +42,7 @@ multiple agents, or LangGraph integration.  These are the next steps in
 development.
 """
 
-from agents.ipa import process_input
-from agents.narrative_generator import generate_narrative
-from schema import AgentState, GameState, CharacterState
-from typing import Dict
+
 
 def main():
     """

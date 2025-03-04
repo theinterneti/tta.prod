@@ -42,7 +42,7 @@ Key Responsibilities:
 import json
 from typing import Dict, List, Optional
 
-import settings
+from settings import settings
 from langchain.prompts import PromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain_openai import ChatOpenAI
