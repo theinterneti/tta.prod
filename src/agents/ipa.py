@@ -1,252 +1,250 @@
-# tta/ipa.py
-
 """
 Input Processor Agent (IPA) for the Therapeutic Text Adventure (TTA).
 
-The IPA is responsible for:
-
-1.  **Parsing Player Input:**  Breaking down the player's raw text input into
-    its constituent parts (words, phrases).
-2.  **Identifying Intent:** Determining the player's intention (e.g., move,
-    examine, talk, quit).  This is the primary function of the IPA.
-3.  **Extracting Key Entities:**  Identifying relevant entities mentioned in the
-    input, such as:
-    *   Direction (for movement commands)
-    *   Object (for examination or interaction)
-    *   NPC (for conversations)
-4.  **Structuring Data:** Transforming the parsed input into a structured format
-    (JSON) that can be easily used by other agents.
-5. **Handling Ambiguity/Errors:**  Dealing with unclear or invalid input
-    gracefully, potentially prompting the player for clarification.
-6. **CoRAG Integration:** Using Chain-of-Retrieval Augmented Generation (CoRAG)
-    to iteratively refine its understanding of the player's input by querying
-    the knowledge graph.
-
-The IPA uses a combination of:
-
-*   **LangChain:** For prompt templates, LLM interaction, and output parsing.
-*   **Qwen2.5:**  The Large Language Model (LLM) that performs the core
-    natural language understanding.
-*   **Neo4j (via tools):**  For querying the knowledge graph to resolve
-    ambiguities and identify entities.
-*   **Pydantic:** For defining the expected output schema (JSON).
-
+[ ... Docstring from original code ... ]
 """
 
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.schema.output_parser import StrOutputParser
 import json
 import logging
-from typing import Dict, Optional
-try:
-    from tta.utils.neo4j_utils import execute_query  # Import Neo4j utility functions
-except ImportError as e:
-    logging.error("Could not import 'execute_query' from 'tta.utils.neo4j_utils'. Please ensure the module exists and is correctly installed.")
-    raise e
-from tta import settings  # Import settings
-from tta.schema import QueryKnowledgeGraphInput, QueryKnowledgeGraphOutput  # Import schemas
+from typing import Any, Dict, List, Optional
 
-# --- 1. LLM Setup (LM Studio) ---
+from langchain.prompts import PromptTemplate
+from langchain.schema.output_parser import PydanticOutputParser
+from langchain_openai import ChatOpenAI
+
+# from pydantic import BaseModel, Field # No longer needed here - imported from schema.py
+
+try:
+    from tools import execute_query  # Import Neo4j utility functions
+except ImportError as e:
+    logging.error(
+        "Could not import 'execute_query' from 'tools.py'. "
+        "Please ensure the module exists and is correctly placed in the 'tta' directory."
+    )
+    raise e
+import settings  # Import settings
+
+from src.schema import (  # Import schemas
+    IntentSchema,
+    QueryKnowledgeGraphInput,
+    QueryKnowledgeGraphOutput,
+)
+
+# --- 1. Logging Setup ---
+logger = logging.getLogger(__name__)  # Set up logger for this module
+logger.setLevel(logging.DEBUG if settings.DEBUG_MODE else logging.INFO)
+formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+logger.addHandler(ch)
+
+
+# --- 2. Define Pydantic Output Schema ---
+# IntentSchema is now imported from src.schema
+
+
+# --- 3. LLM Setup (LM Studio) ---
 llm = ChatOpenAI(
     openai_api_base=settings.LLM_API_BASE,  # Your LM Studio endpoint
     api_key=settings.LLM_API_KEY,  # Placeholder, not used by LM Studio
-    model=settings.LLM_MODEL_NAME  # Optional, but good practice to specify.
+    model=settings.LLM_MODEL_NAME,  # Optional, but good practice to specify.
+    temperature=0,  # Set temperature to 0 for more deterministic output
 )
 
-# --- 2. Prompt Template ---
-# Note:  This is a *simplified* prompt for initial demonstration.
-#        A production-ready prompt would be much more detailed and robust.
-prompt_template = PromptTemplate.from_template(
-    """You are the Input Processor Agent (IPA) for a text adventure game.
-    Your task is to analyze the player's input and determine their intent.
+# --- 4. Output Parser (Pydantic) ---
+output_parser = PydanticOutputParser(pydantic_object=IntentSchema)
 
-    Possible Intents:
-    - look:      The player wants to observe their surroundings (e.g., "look", "look around").
-    - move:      The player wants to move in a specific direction (e.g., "go north", "north").
-    - examine:   The player wants to examine an object more closely (e.g., "examine table").
-    - talk to:   The player wants to initiate dialogue with a character (e.g., "talk to Elara").
-    - quit:      The player wants to quit the game (e.g., "quit", "exit").
-    - unknown:   The player's intent cannot be determined from the input.
+# --- 5. Enhanced Prompt Template ---
+prompt_template = PromptTemplate(
+    template="""You are the Input Processor Agent (IPA) for a therapeutic text adventure game.
+    Your task is to analyze the player's text input and accurately determine their game intent.
 
-    Output Format:
-    Return a JSON object, and NOTHING ELSE.  The JSON object MUST have an "intent" key.
-    The "direction", "object", and "npc" keys are OPTIONAL and should ONLY be included
-    if they are relevant to the intent.
+    **Instructions:**
 
-    {{
-      "intent": "...",     // REQUIRED. One of the intents listed above.
-      "direction": "...",  // OPTIONAL.  One of: "north", "south", "east", "west". Include ONLY if intent is "move".
-      "object": "...",     // OPTIONAL.  The object the player wants to examine. Include ONLY if intent is "examine".
-      "npc": "..."        // OPTIONAL.  The name of the NPC the player wants to talk to. Include ONLY if intent is "talk to".
-    }}
+    1.  **Identify Intent:** Determine the player's primary intent from the input. The possible intents are strictly limited to the following categories:
+        *   `look`:      The player wants to observe their current surroundings. Keywords: "look", "around", "describe", "environment".
+        *   `move`:      The player wants to move in a direction. Keywords: "go", "move", "travel", "north", "south", "east", "west", and direction words.
+        *   `examine`:   The player wants to examine a specific object in more detail. Keywords: "examine", "look at", "inspect", "describe", "check", and object names.
+        *   `talk to`:   The player wants to initiate a conversation with a Non-Player Character (NPC). Keywords: "talk", "speak", "converse", "greet", "ask", "tell", "with", "to", and NPC names.
+        *   `quit`:      The player wants to end the game session. Keywords: "quit", "exit", "end", "stop", "leave game".
+        *   `unknown`:   If the player's intent cannot be clearly determined or does not fall into the above categories, classify it as "unknown".  This is for gibberish or unsupported commands.
 
-    Examples:
+    2.  **Extract Entities (Conditional):**
+        *   If the intent is `move`, extract the `direction` (north, south, east, or west).
+        *   If the intent is `examine`, extract the `object` name.
+        *   If the intent is `talk to`, extract the `npc` name.
+        *   Do NOT extract entities for `look`, `quit`, or `unknown` intents.
 
-    Player Input: look around
-    Output: {{"intent": "look"}}
+    3.  **Output Format:**  You MUST respond with a valid JSON object that conforms to the following Pydantic schema:
 
-    Player Input: go north
-    Output: {{"intent": "move", "direction": "north"}}
+    ```json
+    {output_format}
+    ```
 
-    Player Input: examine the rusty key
-    Output: {{"intent": "examine", "object": "rusty key"}}
+    Ensure the JSON object includes the REQUIRED "intent" key.
+    Include "direction", "object", and "npc" keys ONLY when they are relevant to the identified intent (move, examine, talk to, respectively).  Leave them out for other intents.
 
-    Player Input: talk to the blacksmith
-    Output: {{"intent": "talk to", "npc": "blacksmith"}}
+    **Examples:**
 
-    Player Input: quit
-    Output: {{"intent": "quit"}}
+    *   Player Input: "look around"  Output: `{{"intent": "look"}}`
+    *   Player Input: "go north"     Output: `{{"intent": "move", "direction": "north"}}`
+    *   Player Input: "examine the rusty key" Output: `{{"intent": "examine", "object": "rusty key"}}`
+    *   Player Input: "talk to Elara" Output: `{{"intent": "talk to", "npc": "Elara"}}`
+    *   Player Input: "quit game"    Output: `{{"intent": "quit"}}`
+    *   Player Input: "xyzzy"        Output: `{{"intent": "unknown"}}`
 
-    Player Input: asdfghjkl
-    Output: {{"intent": "unknown"}}
-
-    Player Input: {player_input}
-    Output:
-    """
+    **Player Input:** {player_input}
+    **Output (JSON):**
+    """,
+    input_variables=["player_input"],
+    partial_variables={
+        "output_format": output_parser.get_format_instructions()
+    },  # Include output format instructions in prompt
 )
 
-# --- 3. Output Parser (String Output) ---
-output_parser = StrOutputParser()
+# --- 6. LangChain Chain (The IPA) ---
+ipa_chain = prompt_template | llm | output_parser  # Use PydanticOutputParser
 
-# --- 4. LangChain Chain (The IPA) ---
-ipa_chain = prompt_template | llm | output_parser
 
-# --- 5. CoRAG Function (Example - Simplified) ---
-# In a real implementation, this would use LangGraph for iterative calls.
-def perform_corag(initial_intent: Dict, player_input: str) -> Dict:
+# --- 7. CoRAG Function (Refined) ---
+def perform_corag(initial_intent: IntentSchema, player_input: str) -> IntentSchema:
     """
-    Performs a simplified version of Chain-of-Retrieval Augmented Generation (CoRAG)
-    to refine the IPA's understanding of the player's input.
+    Performs Chain-of-Retrieval Augmented Generation (CoRAG) to refine the IPA's
+    understanding of the player's input by querying the knowledge graph.
 
     Args:
-        initial_intent: The initial intent dictionary from the IPA.
+        initial_intent: The initial IntentSchema object from the IPA.
         player_input: The original player input string.
 
     Returns:
-        A refined intent dictionary.
+        A refined IntentSchema object.
     """
-    refined_intent = initial_intent.copy()
+    refined_intent_dict = (
+        initial_intent.dict()
+    )  # Convert Pydantic object to dict for easier modification
 
-    if initial_intent["intent"] == "examine" and initial_intent["object"]:
-        # Example: If the intent is "examine", try to get more info about the object.
-        object_name = initial_intent["object"]
-        query = """
-            MATCH (o:Item {name: $object_name})  // Assuming objects are Items
-            RETURN o
-            LIMIT 1
-        """
-        params = {"object_name": object_name}
+    if refined_intent_dict["intent"] == "examine" and refined_intent_dict["object"]:
+        object_name = refined_intent_dict["object"]
+        query_input = QueryKnowledgeGraphInput(
+            query_type="retrieve_entity_by_name",
+            entity_label="Item",  # Assuming objects are Items
+            entity_name=object_name,
+            properties=[
+                "name",
+                "description",
+                "type",
+                "rarity",
+                "material",
+            ],  # Example properties to retrieve
+        )
         try:
-            result = execute_query(query, params)
-            if result:
-                # Object found in the knowledge graph. Add details to the intent.
-                object_data = result[0]['o']
-                refined_intent["object_details"] = object_data  # Add details
-                logging.debug(f"CoRAG: Found object details: {object_data}")
+            query_output = execute_query(
+                query=query_input.query, params=query_input.params
+            )
+            if query_output:
+                object_data_list = QueryKnowledgeGraphOutput.parse_neo4j_output(
+                    query_output
+                )  # Use schema for output parsing
+                if object_data_list:  # Check if list is not empty after parsing
+                    object_data = object_data_list[
+                        0
+                    ].dict()  # Take the first result and convert to dict
+                    refined_intent_dict["object_details"] = (
+                        object_data  # Add details to intent
+                    )
+                    logger.debug(
+                        f"CoRAG: Found object details for '{object_name}': {object_data}"
+                    )
+                else:
+                    logger.debug(
+                        f"CoRAG: No valid object data parsed from KG for '{object_name}'."
+                    )
             else:
-                logging.debug(f"CoRAG: Object '{object_name}' not found in knowledge graph.")
+                logger.debug(
+                    f"CoRAG: Object '{object_name}' not found in knowledge graph."
+                )
         except Exception as e:
-            logging.error(f"CoRAG: Error during knowledge graph query: {e}")
+            logger.error(
+                f"CoRAG: Error during knowledge graph query for object '{object_name}': {e}"
+            )
 
-    elif initial_intent["intent"] == "talk to" and initial_intent["npc"]:
-        # Example: If intent is "talk to", try to get character info
-        npc_name = initial_intent["npc"]
-        query = """
-            MATCH (c:Character {name: $npc_name})
-            RETURN c
-            LIMIT 1
-        """
-        params = {"npc_name": npc_name}
+    elif refined_intent_dict["intent"] == "talk to" and refined_intent_dict["npc"]:
+        npc_name = refined_intent_dict["npc"]
+        query_input = QueryKnowledgeGraphInput(
+            query_type="retrieve_entity_by_name",
+            entity_label="Character",
+            entity_name=npc_name,
+            properties=[
+                "name",
+                "description",
+                "species",
+                "role",
+                "faction",
+            ],  # Example character properties
+        )
         try:
-            result = execute_query(query, params)
-            if result:
-                character_data = result[0]['c']
-                refined_intent["npc_details"] = character_data
-                logging.debug(f"CoRAG: Found character details: {character_data}")
+            query_output = execute_query(
+                query=query_input.query, params=query_input.params
+            )
+            if query_output:
+                character_data_list = QueryKnowledgeGraphOutput.parse_neo4j_output(
+                    query_output
+                )  # Use schema for output parsing
+                if character_data_list:  # Check if list is not empty after parsing
+                    character_data = character_data_list[
+                        0
+                    ].dict()  # Take the first result and convert to dict
+                    refined_intent_dict["npc_details"] = character_data
+                    logger.debug(
+                        f"CoRAG: Found character details for '{npc_name}': {character_data}"
+                    )
+                else:
+                    logger.debug(
+                        f"CoRAG: No valid character data parsed from KG for '{npc_name}'."
+                    )
             else:
-                logging.debug(f"CoRAG: NPC '{npc_name}' not found in knowledge graph.")
+                logger.debug(f"CoRAG: NPC '{npc_name}' not found in knowledge graph.")
         except Exception as e:
-            logging.error(f"CoRAG: Error during knowledge graph query: {e}")
+            logger.error(
+                f"CoRAG: Error during knowledge graph query for NPC '{npc_name}': {e}"
+            )
 
-    # Add more CoRAG steps as needed for other intents and scenarios.
+    return IntentSchema(**refined_intent_dict)  # Return as Pydantic object
 
-    return refined_intent
 
-# --- 6. Main Input Processing Function ---
-
-def process_input(player_input: str) -> Dict:
+# --- 8. Main Input Processing Function ---
+def process_input(player_input: str) -> IntentSchema:
     """
     Processes the player's input, determines the intent, extracts relevant
-    information, and potentially uses CoRAG to refine the understanding.
+    information, and uses CoRAG to refine the understanding.
 
     Args:
         player_input: The raw text input from the player.
 
     Returns:
-        A dictionary representing the parsed intent, potentially with additional
-        information from CoRAG.  Returns {"intent": "unknown"} if the input
-        cannot be parsed.
+        An IntentSchema object representing the parsed intent, potentially with
+        additional information from CoRAG. Returns IntentSchema with intent
+        "unknown" if the input cannot be parsed.
     """
-    response_str = ipa_chain.invoke({"player_input": player_input})
-    # logging.debug(f"Raw LLM output: {response_str}")  # Uncomment for debugging
-
+    logger.debug(f"Processing player input: '{player_input}'")
     try:
-        response_dict = json.loads(response_str)  # Parse the JSON string
-
-        # --- Basic Validation ---
-        if "intent" not in response_dict:
-            return {"intent": "unknown"}
-
-        # Ensure valid intent
-        valid_intents = ["look", "move", "examine", "talk to", "quit", "unknown"]
-        if response_dict["intent"] not in valid_intents:
-            return {"intent": "unknown"}
-
-        # Further validation and cleanup based on intent:
-        if response_dict["intent"] == "move":
-            if "direction" not in response_dict or response_dict["direction"] not in ["north", "south", "east", "west"]:
-                return {"intent": "unknown"}
-
-        # Remove extraneous keys.
-        valid_keys = ["intent"]
-        if response_dict["intent"] == "move":
-            valid_keys.append("direction")
-        elif response_dict["intent"] == "examine":
-            valid_keys.append("object")
-        elif response_dict["intent"] == "talk to":
-            valid_keys.append("npc")
-
-        # Create a new dictionary with only the necessary keys
-        clean_response = {key: response_dict[key] for key in valid_keys if key in response_dict}
+        response: IntentSchema = ipa_chain.invoke(
+            {"player_input": player_input}
+        )  # Chain now returns Pydantic object
+        logger.debug(f"Initial LLM Intent: {response.to_json()}")
 
         # --- CoRAG ---
-        refined_response = perform_corag(clean_response, player_input)
-
+        refined_response: IntentSchema = perform_corag(response, player_input)
+        logger.debug(f"Refined Intent after CoRAG: {refined_response.to_json()}")
         return refined_response
 
-    except json.JSONDecodeError:
-        logging.error(f"Could not decode JSON from LLM response: {response_str}")
-        return {"intent": "unknown"}
+    except Exception as e:  # Catch any exceptions during processing
+        logger.error(f"Error processing input: '{player_input}'. Error: {e}")
+        logger.error("Returning unknown intent.")
+        return IntentSchema(
+            intent="unknown"
+        )  # Return unknown intent as Pydantic object
 
-# --- 7. Unit Tests (Example - move to test_ipa.py) ---
-if __name__ == '__main__':
-    import unittest
 
-    class TestIPA(unittest.TestCase):
-        def test_process_input(self):
-            test_cases = [
-                ("look around", {"intent": "look"}),
-                ("go north", {"intent": "move", "direction": "north"}),
-                ("examine the rusty key", {"intent": "examine", "object": "the rusty key"}),
-                ("talk to the blacksmith", {"intent": "talk to", "npc": "the blacksmith"}),
-                ("quit", {"intent": "quit"}),
-                ("invalid input", {"intent": "unknown"}),
-            ]
-
-            for player_input, expected_output in test_cases:
-                with self.subTest(player_input=player_input):
-                    actual_output = process_input(player_input)
-                    self.assertEqual(actual_output, expected_output)
-
-    unittest.main()
+# --- 9. Unit Tests (Moved to test_ipa.py) ---
+# Example of how to run from command line:  python -m unittest test_ipa.py

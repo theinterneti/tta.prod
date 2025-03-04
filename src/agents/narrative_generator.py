@@ -39,27 +39,28 @@ Key Responsibilities:
 
 """
 
-from langchain.prompts import PromptTemplate
-from langchain_openai import ChatOpenAI
-from langchain.schema.output_parser import StrOutputParser
 import json
-from typing import Dict, Optional, List
-from tta.utils.neo4j_utils import execute_query, get_node_by_id
-from tta import settings
-from tta.schema import (
+from typing import Dict, List, Optional
+
+import settings
+from langchain.prompts import PromptTemplate
+from langchain.schema.output_parser import StrOutputParser
+from langchain_openai import ChatOpenAI
+from schema import (
     AgentState,
+    GetCharacterProfileInput,
+    GetCharacterProfileOutput,
     QueryKnowledgeGraphInput,
     QueryKnowledgeGraphOutput,
-    GetCharacterProfileInput,
-    GetCharacterProfileOutput
 )  # Import relevant schemas
+from utils.neo4j_utils import execute_query, get_node_by_id
 
 # --- LLM Setup (LM Studio) ---
 llm = ChatOpenAI(
     openai_api_base=settings.LLM_API_BASE,
     api_key=settings.LLM_API_KEY,
     model=settings.LLM_MODEL_NAME,
-    temperature=settings.DEFAULT_TEMPERATURE # Add temperature
+    temperature=settings.DEFAULT_TEMPERATURE,  # Add temperature
 )
 
 # --- Prompt Template (Simplified Example) ---
@@ -90,6 +91,7 @@ output_parser = StrOutputParser()
 # --- LangChain Chain (Simplified) ---
 nga_chain = prompt_template | llm | output_parser
 
+
 # --- CoRAG (Conceptual - Placeholder for LangGraph integration) ---
 def perform_corag(initial_response: str, state: AgentState) -> str:
     """
@@ -107,18 +109,24 @@ def perform_corag(initial_response: str, state: AgentState) -> str:
 
     # Example: Get more details about the current location.
     location_id = state.game_state.current_location_id
-    location_details = get_node_by_id("Location", location_id) # Using the utility function.
+    location_details = get_node_by_id(
+        "Location", location_id
+    )  # Using the utility function.
 
     if location_details:
-        refined_response += f"\n\nYou are in {location_details.get('name', 'an unknown location')}. "
-        description = location_details.get('description')
+        refined_response += (
+            f"\n\nYou are in {location_details.get('name', 'an unknown location')}. "
+        )
+        description = location_details.get("description")
         if description:
-             refined_response += description
+            refined_response += description
 
     # Add more CoRAG steps as needed (e.g., get character details, check lore).
     return refined_response
 
+
 # --- Main NGA Logic ---
+
 
 def generate_narrative(state: AgentState) -> Dict[str, str]:
     """
@@ -133,9 +141,11 @@ def generate_narrative(state: AgentState) -> Dict[str, str]:
     # --- 1. Prepare Prompt Input ---
     prompt_input = {
         "current_location": state.game_state.current_location_id,  #  Get location ID
-        "nearby_characters": ", ".join(state.game_state.nearby_characters),  # Format as string
+        "nearby_characters": ", ".join(
+            state.game_state.nearby_characters
+        ),  # Format as string
         "player_input": state.player_input or "",  # Handle potential None value
-        "metaconcepts": state.metaconcepts, # Include metaconcepts
+        "metaconcepts": state.metaconcepts,  # Include metaconcepts
     }
 
     # --- 2. Generate Initial Response ---
@@ -145,15 +155,20 @@ def generate_narrative(state: AgentState) -> Dict[str, str]:
         response_dict = json.loads(response_str)
     except json.JSONDecodeError:
         print(f"ERROR: NGA returned invalid JSON: {response_str}")
-        return {"response": "I'm having trouble understanding the situation. Please try again.", "action": None}
+        return {
+            "response": "I'm having trouble understanding the situation. Please try again.",
+            "action": None,
+        }
 
     # --- 3. Perform CoRAG (if needed) ---
-    refined_response = perform_corag(response_dict.get("response", ""), state) # Use .get()
+    refined_response = perform_corag(
+        response_dict.get("response", ""), state
+    )  # Use .get()
     response_dict["response"] = refined_response
-
 
     # --- 4. Update and Return ---
     return response_dict
+
 
 # --- Example Usage (within a LangGraph workflow) ---
 # This would be part of a larger LangGraph setup, not a standalone function.

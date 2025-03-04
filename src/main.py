@@ -1,6 +1,6 @@
 # tta/main.py
 
-from settings import *  # Import all settings
+from config import *  # Import all settings
 
 print(f"Using Neo4j URI: {NEO4J_URI}")
 print(f"Using LLM API Base: {LLM_API_BASE}")
