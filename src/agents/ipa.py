@@ -40,12 +40,12 @@ import json
 import logging
 from typing import Dict, Optional
 try:
-    from tta.utils.neo4j_utils import execute_query  # Import Neo4j utility functions
+    from utils.neo4j_utils import execute_query  # Import Neo4j utility functions
 except ImportError as e:
     logging.error("Could not import 'execute_query' from 'tta.utils.neo4j_utils'. Please ensure the module exists and is correctly installed.")
     raise e
-from tta import settings  # Import settings
-from tta.schema import QueryKnowledgeGraphInput, QueryKnowledgeGraphOutput  # Import schemas
+import settings  # Import settings
+from schema import QueryKnowledgeGraphInput, QueryKnowledgeGraphOutput  # Import schemas
 
 # --- 1. LLM Setup (LM Studio) ---
 llm = ChatOpenAI(
