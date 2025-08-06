@@ -1,25 +1,39 @@
-# tta/main.py
+"""
+Modernized TTA Main Application
 
-from settings import *  # Import all settings
-import sys
+This demonstrates the new architecture with:
+- OpenRouter integration
+- Unified model client
+- Intelligent provider fallback
+- Cost management
+- Clean separation of concerns
+"""
 
-from agents.ipa import process_input
-from agents.narrative_generator import generate_narrative
-from schema import AgentState, GameState, CharacterState
-from typing import Dict
+import asyncio
+import logging
+from typing import Dict, Any, Optional
 
-# Add the TTA source directory to the Python path
-# This is necessary to import the agents and schema modules.
-#
-# Note: This assumes that the TTA source code is located in the /workspaces/tta.prod directory.
-# If the source code is located elsewhere, the path should be adjusted accordingly.
-sys.path.append('/workspaces/tta.prod', '/workspaces/tta.prod/src')
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.text import Text
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
+    print("Rich not available, using basic output")
 
-# --- Main Game Loop ---
-# This is where the game loop would go.  For now, we'll just print a message.
-print("Welcome to the Therapeutic Text Adventure!")
-print(f"Using Neo4j URI: {NEO4J_URI}")
-print(f"Using LLM API Base: {LLM_API_BASE}")
+from .models import UnifiedModelClient, TaskType, model_config
+from .agents import BaseAgent
+
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Console for output
+if RICH_AVAILABLE:
+    console = Console()
+else:
+    console = None
 
 """
 Main game loop for the Therapeutic Text Adventure (TTA).
